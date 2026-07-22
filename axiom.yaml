@@ -1,0 +1,57 @@
+name: christiangeorgelucas/vin-tools
+version: 0.1.0
+language: python
+description: >-
+  Composable Axiom Vehicle Identification Number (VIN) decoding nodes per
+  ISO 3779/3780 and SAE J853 — structural format validation, the position-9
+  check-digit (transliteration + weighted modulus-11), WMI (World
+  Manufacturer Identifier) decode into manufacturer/region/country, the
+  position-10 model-year code disambiguated via the NHTSA/SAE position-7
+  rule, manufacturer-specific body/engine/model/plant/transmission/serial
+  decoding where available, and Squish (Pattern) VIN generation for
+  anonymized aggregation — wrapping the BSD-3-Clause vininfo library
+  (idlesign/vininfo), with the check-digit algorithm additionally
+  implemented from scratch against the public standard. Every node is
+  stateless, deterministic, and fully offline; malformed or unrecognized
+  input returns a structured error, never a crash.
+license: MIT
+author: Christian George Lucas
+tags:
+    - vin
+    - vehicle-identification-number
+    - iso-3779
+    - iso-3780
+    - automotive
+    - wmi
+    - check-digit
+    - model-year
+    - vehicle
+nodes:
+    - name: ValidateVinFormat
+      input: VinInput
+      output: FormatValidationResult
+      description: Validate a VIN's structural form per ISO 3779 — exactly 17 characters drawn only from the alphanumeric set excluding I, O, and Q, e.g. "1M8GDM9AXKP042788" -> valid=true. Input is whitespace-trimmed and upper-cased before checking. Does NOT check the position-9 check digit (see VerifyCheckDigit) — this is form only. Malformed input (wrong length, disallowed characters) returns valid=false with a machine-readable error code and human-readable detail, never a crash.
+    - name: VerifyCheckDigit
+      input: VinInput
+      output: CheckDigitResult
+      description: Verify the SAE J853 / ISO 3779 position-9 check digit — transliterate every character to a digit, weighted-sum, then modulus 11 (remainder 10 -> "X"), and compare against the character actually at position 9. Not every manufacturer/market follows this convention (e.g. Ford Australia, and non-North-American VINs generally); rule_applies reports whether this VIN's manufacturer is known to, so valid=false is only a real defect when rule_applies=true. Always returns the algorithm's expected_check_digit regardless.
+    - name: DecodeWmi
+      input: VinInput
+      output: WmiResult
+      description: Decode the WMI (World Manufacturer Identifier, VIN positions 1-3) per ISO 3780 into manufacturer, region, and country of origin, e.g. "1M8GDM9AXKP042788" -> manufacturer="Mercury", region="North America", country="United States". manufacturer_known=false (with manufacturer/country/region reflecting only the generic region/country tables) when the specific WMI isn't in the reference database — never a guessed manufacturer name. Also reports whether the WMI's 3rd character marks a low-volume manufacturer (fewer than 1000 vehicles/year).
+    - name: DecodeModelYear
+      input: VinInput
+      output: ModelYearResult
+      description: Decode the VIN position-10 model-year code and disambiguate the inherent 30-year-cycle ambiguity using the NHTSA/SAE position-7 rule (49 CFR 565.16, note to Table VII) — numeric position-7 means the 1980-2009 cycle, alphabetic means 2010-2039. Returns both the full set of candidate_years the raw code is consistent with and the single most_likely_year after applying the rule. error=UNRECOGNIZED_YEAR_CODE for a reserved/invalid position-10 character.
+    - name: DecodeManufacturerDetails
+      input: VinInput
+      output: ManufacturerDetailsResult
+      description: Decode manufacturer-specific body/engine/model/plant/transmission/serial from the VDS and VIS. Only a handful of manufacturers have a dedicated decoder wired up in the underlying reference data (currently Lada/AvtoVAZ, Nissan, Opel, Renault, Dafra, Bajaj, and Ford Australia) — supported=false with every field empty for any other VIN is expected and not an error, not a failure to decode.
+    - name: SquishVin
+      input: VinInput
+      output: SquishVinResult
+      description: Produce the Squish (Pattern) VIN — VIN positions 1-8 plus 10-11 — omitting the position-9 check digit and the position-12-17 sequential serial. Groups vehicles sharing make/model/year/plant while dropping the individually-identifying tail, e.g. for anonymized aggregation or privacy-preserving analytics.
+    - name: DecodeVin
+      input: VinInput
+      output: VinDecodeResult
+      description: Full decode of one VIN in a single envelope — combines WMI (manufacturer/region/country), the SAE position-9 check digit, the position-10 model year (with position-7 disambiguation), the raw VDS/VIS sections, the Squish VIN, and manufacturer-specific details where available. Equivalent to calling every other node in this package and merging the results into one response. format_valid=false (with every other field a zero value) when the VIN fails structural validation.

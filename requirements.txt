@@ -1,0 +1,3 @@
+# Add your Python runtime dependencies here, one per line.
+vininfo==1.11.0
+

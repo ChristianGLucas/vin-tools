@@ -1,0 +1,190 @@
+// This file defines the data contracts (messages) for your Axiom package.
+// Every node's --input and --output refers to a message defined here.
+//
+// Run `axiom create message <Name>` to scaffold a new message below.
+// Run `axiom generate` to compile these definitions into language bindings in gen/.
+//
+// DOCUMENTATION
+//   Comments written directly above a message or field declaration are extracted
+//   automatically at publish time and shown in the Axiom registry as documentation.
+//   Write your descriptions there — no separate doc files needed.
+//
+//   Leading comment  (no blank line before the declaration) → registry description ✓
+//   Detached comment (blank line before the declaration)    → ignored by registry  ✗
+//
+// This file is yours to edit. Axiom only appends new message blocks — it never
+// overwrites or removes content you have written.
+
+syntax = "proto3";
+
+package christiangeorgelucas.vin_tools;
+
+// A 17-character Vehicle Identification Number (ISO 3779/3780). Every node in
+// this package accepts this single input shape. The VIN is whitespace-trimmed
+// and upper-cased before any check; the excluded letters I, O, and Q are
+// never valid regardless of case.
+message VinInput {
+  string vin = 1;
+}
+
+// Result of structural VIN validation only (ISO 3779 §4 form): exactly 17
+// characters, drawn from the alphanumeric set excluding I, O, and Q. Does
+// NOT check the position-9 check digit — see CheckDigitResult for that.
+message FormatValidationResult {
+  // True when `vin` (after trim+uppercase) is a well-formed 17-character VIN.
+  bool valid = 1;
+  // The trimmed, upper-cased form of the input that was actually checked.
+  string normalized_vin = 2;
+  // Machine-readable reason valid=false; empty on success. One of:
+  // EMPTY, WRONG_LENGTH, INVALID_CHARACTERS.
+  string error = 3;
+  // Human-readable detail, e.g. the actual length seen or which characters
+  // were rejected (including a call-out if I, O, or Q were present).
+  string detail = 4;
+}
+
+// Result of the SAE J853 / ISO 3779 position-9 check-digit verification: a
+// transliteration of each character to a digit, a weighted sum, then modulus
+// 11 (a remainder of 10 is written as 'X'). Not every manufacturer/market
+// follows this convention — see `rule_applies`.
+message CheckDigitResult {
+  // False when this VIN's manufacturer is not known to follow the SAE
+  // position-9 check-digit convention (e.g. Ford Australia, and many
+  // non-North-American-market VINs generally). When false, `valid` is
+  // meaningless — it is not "invalid", it simply does not apply.
+  bool rule_applies = 1;
+  // The character actually present at VIN position 9.
+  string actual_check_digit = 2;
+  // The character the SAE algorithm computes should be there.
+  string expected_check_digit = 3;
+  // True iff actual_check_digit == expected_check_digit. Only meaningful
+  // when rule_applies is true.
+  bool valid = 4;
+  // Empty on success (a structurally valid VIN was checked). One of
+  // EMPTY, WRONG_LENGTH, INVALID_CHARACTERS, or DECODE_FAILED (see
+  // FormatValidationResult.error) when the VIN failed validation — every
+  // other field is then a zero value.
+  string error = 5;
+}
+
+// Decode of the WMI (World Manufacturer Identifier, VIN positions 1-3) per
+// ISO 3780: manufacturer, region, and country of origin.
+message WmiResult {
+  // The first 3 characters of the VIN.
+  string wmi = 1;
+  // Manufacturer name, e.g. "Mercury". Empty when the WMI is not present in
+  // the reference database (manufacturer_known is then false).
+  string manufacturer = 2;
+  // Region name derived from the first character, e.g. "North America".
+  string region = 3;
+  // Country name derived from the first two characters per ISO 3780's
+  // country-code table, e.g. "United States". This is a plain country
+  // name, not an ISO 3166-1 alpha-2 code — pair with
+  // christiangeorgelucas/country-tools' FindCountryByName to resolve one.
+  string country = 4;
+  // True when the 3rd WMI character is "9": a manufacturer that builds
+  // fewer than 1000 vehicles/year, per ISO 3780 (its full identity is
+  // disambiguated by VIN positions 12-14, outside this WMI decode).
+  bool is_small_volume_manufacturer = 5;
+  // True when `manufacturer` resolved against a known WMI entry in the
+  // reference database. False means region/country still reflect the
+  // generic ISO 3780 first/first-two-character tables, but no specific
+  // manufacturer was matched.
+  bool manufacturer_known = 6;
+  // Empty on success. One of EMPTY, WRONG_LENGTH, INVALID_CHARACTERS, or
+  // DECODE_FAILED when the VIN failed validation — every other field is
+  // then a zero value.
+  string error = 7;
+}
+
+// Decode of the position-10 model-year code, disambiguated per the
+// NHTSA/SAE position-7 rule (49 CFR 565.16, note to Table VII): a numeric
+// character at position 7 means the position-10 code refers to the
+// 1980-2009 cycle; an alphabetic character means the 2010-2039 cycle.
+message ModelYearResult {
+  // The character at VIN position 10.
+  string year_code = 1;
+  // Every calendar year from 1980 to the present that is consistent with
+  // `year_code` under the repeating 30-year cycle, descending (most recent
+  // first). The code alone is inherently ambiguous across cycles.
+  repeated int32 candidate_years = 2;
+  // The single most-likely year, after applying the position-7 rule to
+  // `candidate_years`. -1 when no candidate survives the filter (a rare or
+  // reserved year code).
+  int32 most_likely_year = 3;
+  // The character at VIN position 7, used for the disambiguation above.
+  string position_7_character = 4;
+  // Empty on success. EMPTY, WRONG_LENGTH, INVALID_CHARACTERS, or
+  // DECODE_FAILED when the VIN itself failed validation (most_likely_year
+  // is then the zero value, 0); UNRECOGNIZED_YEAR_CODE when the VIN is
+  // valid but the position-10 character is not in the standard table
+  // (candidate_years is then empty and most_likely_year is -1).
+  string error = 5;
+}
+
+// Manufacturer-specific decode of body/engine/model/plant/transmission/
+// serial from the VDS and VIS. Only a handful of manufacturers have a
+// dedicated decoder wired up in the underlying reference data.
+message ManufacturerDetailsResult {
+  // True when this VIN's manufacturer has a manufacturer-specific decoder
+  // available (currently: Lada/AvtoVAZ, Nissan, Opel, Renault, Dafra,
+  // Bajaj, Ford Australia). False means every field below is empty — that
+  // is expected for the vast majority of VINs, not an error.
+  bool supported = 1;
+  string manufacturer = 2;
+  string body = 3;
+  string engine = 4;
+  string model = 5;
+  string plant = 6;
+  string transmission = 7;
+  string serial = 8;
+  // Empty on success. One of EMPTY, WRONG_LENGTH, INVALID_CHARACTERS, or
+  // DECODE_FAILED when the VIN failed validation.
+  string error = 9;
+}
+
+// The Squish (Pattern) VIN: positions 1-8 plus 10-11, omitting the position-9
+// check digit and the position-12-17 sequential serial. Groups vehicles of
+// the same make/model/year/plant while dropping the individually-identifying
+// tail — useful for anonymized aggregation.
+message SquishVinResult {
+  string squish_vin = 1;
+  // Empty on success. One of EMPTY, WRONG_LENGTH, INVALID_CHARACTERS, or
+  // DECODE_FAILED when the VIN failed validation.
+  string error = 2;
+}
+
+// The full decode of one VIN in a single envelope: every fact this package
+// can produce, combined. `error` is one of EMPTY, WRONG_LENGTH,
+// INVALID_CHARACTERS, or DECODE_FAILED (with every other field a zero
+// value) when the VIN fails validation; all other fields follow the same
+// semantics as their single-purpose counterparts above.
+message VinDecodeResult {
+  string vin = 1;
+  bool format_valid = 2;
+  string wmi = 3;
+  string manufacturer = 4;
+  bool manufacturer_known = 5;
+  string region = 6;
+  string country = 7;
+  bool is_small_volume_manufacturer = 8;
+  string vds = 9;
+  string vis = 10;
+  bool checkdigit_rule_applies = 11;
+  bool checkdigit_valid = 12;
+  string expected_check_digit = 13;
+  repeated int32 candidate_model_years = 14;
+  int32 most_likely_model_year = 15;
+  string squish_vin = 16;
+  bool manufacturer_details_supported = 17;
+  string body = 18;
+  string engine = 19;
+  string model = 20;
+  string plant = 21;
+  string transmission = 22;
+  string serial = 23;
+  // Empty on success. One of EMPTY, WRONG_LENGTH, INVALID_CHARACTERS, or
+  // DECODE_FAILED when the VIN failed validation.
+  string error = 24;
+  string detail = 25;
+}
