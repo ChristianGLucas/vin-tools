@@ -14,10 +14,8 @@ from vininfo import Vin
 from vininfo.common import UnsupportedBrand
 from vininfo.exceptions import VininfoException
 
-# A real VIN is always exactly 17 characters. Reject absurd input up front,
-# before any regex/library work, rather than trusting the caller.
-_MAX_INPUT_LEN = 256
-
+# A real VIN is always exactly 17 characters (ISO 3779) — this is the
+# domain-correctness bound every candidate VIN is checked against below.
 _VALID_VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 
 # Standard ISO 3779 / SAE J853 model-year letters+digits, repeating every 30
@@ -44,12 +42,6 @@ def normalize_vin(raw: str) -> str:
     """
     if raw is None:
         raise NormalizationError("EMPTY", "vin field was not provided")
-
-    if len(raw) > _MAX_INPUT_LEN:
-        raise NormalizationError(
-            "WRONG_LENGTH",
-            f"input is {len(raw)} chars, far beyond any valid VIN (17); rejected before processing",
-        )
 
     normalized = raw.strip().upper()
 
